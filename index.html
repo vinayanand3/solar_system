@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Solar System V18: High Fidelity</title>
+    <title>Solar System V20: High Intensity</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; cursor: none; }
         
@@ -15,7 +15,7 @@
             flex-direction: column; align-items: center; gap: 10px;
         }
         .hud-panel {
-            background: rgba(10, 15, 20, 0.85); /* Darker, denser background like sample */
+            background: rgba(10, 15, 20, 0.85);
             border: 1px solid rgba(100, 200, 255, 0.3);
             border-radius: 40px; padding: 15px 40px;
             backdrop-filter: blur(15px); color: #fff;
@@ -138,7 +138,7 @@
             
             <div class="gesture-hint">
                 <span class="hint-icon">PINCH</span> SHRINK
-                <span class="hint-icon" style="margin-left:10px;">OPEN</span> WARP
+                <span class="hint-icon" style="margin-left:10px;">OPEN</span> FLY IN
                 <span class="hint-icon" style="margin-left:10px;">PUSH</span> EXIT
             </div>
         </div>
@@ -163,36 +163,29 @@
         void main() {
             vec3 basePos = position;
 
-            // SATELLITE ORBIT (Retained from V17)
+            // SATELLITE ORBIT
             if(aIsMoon > 0.5) {
                 float angle = aOrbitOffset + uTime * aOrbitSpeed * 0.2; 
                 basePos.x += cos(angle) * aOrbitRad;
                 basePos.z += sin(angle) * aOrbitRad;
             }
 
+            // Linear Zoom (Fly Through)
             vec3 pos = basePos * uScale;
-
-            // --- SAMPLE CODE WARP LOGIC ---
-            // Activates when scaling up to create the tunnel effect
-            if(uScale > 3.0) {
-                float dist = length(pos.xy);
-                // The specific sine wave from the sample
-                pos.z += sin(dist * 0.1 - uTime * 2.0) * 0.5 * (uScale - 1.0);
-            }
 
             vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
             gl_Position = projectionMatrix * mvPosition;
 
-            // Twinkle Logic
+            // --- EXACT TWINKLE MATH FROM SAMPLE ---
             float twinkle = sin(uTime * 3.0 + aRandom * 25.0);
             twinkle = smoothstep(-1.0, 1.0, twinkle);
 
-            // Dynamic Sizing (Boosted for visibility)
-            float sizeMult = 400.0;
-            // Scale points up significantly when warping so they feel like clouds you fly through
-            float warpBoost = 1.0 + max(0.0, uScale - 2.0) * 0.5; 
-            
-            gl_PointSize = (aSize * (0.6 + 0.6 * twinkle)) * (sizeMult / -mvPosition.z) * warpBoost;
+            // Dynamic Sizing
+            float sizeMult = 450.0;
+            // Boost size when scaling up to simulate being inside the dust cloud
+            float zoomBoost = 1.0 + max(0.0, uScale - 3.0) * 0.3; 
+
+            gl_PointSize = (aSize * (0.6 + 0.6 * twinkle)) * (sizeMult / -mvPosition.z) * zoomBoost;
             
             vAlpha = 0.3 + 0.7 * twinkle;
             vColor = aColor; 
@@ -206,13 +199,15 @@
             float r = length(gl_PointCoord - vec2(0.5));
             if (r > 0.5) discard;
             
-            // Diamond Core Glow Logic from Sample
+            // Core Glow
             float glow = 1.0 - (r * 2.0);
             glow = pow(glow, 2.5); 
 
-            vec3 baseColor = vColor; 
-            // Hot white center (The key to the density/brightness look)
-            vec3 finalColor = baseColor + vec3(0.8) * pow(glow, 5.0); 
+            // Boost Base Color intensity to prevent "dullness"
+            vec3 intenseColor = vColor * 1.5;
+
+            // Add Hot White Core (from sample code)
+            vec3 finalColor = intenseColor + vec3(0.8) * pow(glow, 5.0); 
 
             gl_FragColor = vec4(finalColor, vAlpha * glow);
         }
@@ -341,7 +336,6 @@
         scene.add(new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(10000 * 3).map(()=>(Math.random()-0.5)*4000), 3)), new THREE.PointsMaterial({color:0xffffff, size:1.5, transparent:true, opacity:0.5})));
 
         // --- HOLOGRAPHIC PARTICLES (Detail View) ---
-        // INCREASED TO 100k FOR SAMPLE CODE DENSITY
         const particleCount = 100000; 
         const pGeo = new THREE.BufferGeometry();
         const pPos = new Float32Array(particleCount * 3);
@@ -391,7 +385,7 @@
                     const idx = particlesUsed + i;
                     const theta = Math.random() * Math.PI * 2;
                     const phi = Math.acos(2 * Math.random() - 1);
-                    const r = (moon.size * Math.cbrt(Math.random())) * 10.0; // Scaled up for visibility at camZ 850
+                    const r = (moon.size * Math.cbrt(Math.random())) * 10.0; 
                     pPos[idx*3] = r * Math.sin(phi) * Math.cos(theta);
                     pPos[idx*3+1] = r * Math.sin(phi) * Math.sin(theta);
                     pPos[idx*3+2] = r * Math.cos(phi);
@@ -401,35 +395,31 @@
                 particlesUsed += particlesPerMoon;
             });
 
-            // 2. GENERATE PLANET (USING SAMPLE CODE DISTRIBUTION STRATEGY)
-            // Rings: 65%, Planet: 15%, Dust: 20% (if Rings exist)
-            // Otherwise: Planet: 70%, Dust: 30%
-            
+            // 2. GENERATE PLANET
             for(let i=particlesUsed; i<particleCount; i++) {
                 let x,y,z, size;
                 const r = Math.random();
                 pIsMoon[i] = 0.0; 
                 pColor[i*3] = planetColor.r; pColor[i*3+1] = planetColor.g; pColor[i*3+2] = planetColor.b;
                 
-                // Base scalar to make particles visible at camera Z 850 (Sample used cam Z 40)
+                // Scalar to make particles visible at camera Z 850
                 const scalar = 12.0; 
 
-                if(hasRings && r < 0.65) { // RINGS (Sample Logic)
+                if(hasRings && r < 0.65) { // RINGS
                     const angle = Math.random() * Math.PI * 2;
-                    // Distribution from sample: 14-23 or 10-12
                     const dist = (Math.random() > 0.4 ? 14 + Math.random() * 9 : 10 + Math.random() * 2) * scalar;
                     x = Math.cos(angle)*dist; z = Math.sin(angle)*dist; y = (Math.random()-0.5)*3.0;
                     size = Math.random() * 2.5;
-                } else if ((hasRings && r < 0.80) || (!hasRings && r < 0.70)) { // PLANET SPHERE
+                } else if ((hasRings && r < 0.80) || (!hasRings && r < 0.70)) { // PLANET
                     const theta = Math.random() * Math.PI * 2;
                     const phi = Math.acos((Math.random() * 2) - 1);
                     const rad = 7.5 * scalar;
                     x = rad * Math.sin(phi) * Math.cos(theta); y = rad * Math.sin(phi) * Math.sin(theta); z = rad * Math.cos(phi);
                     size = Math.random() * 3.0;
-                } else { // AMBIENT DUST (Fly-through effect)
+                } else { // AMBIENT DUST
                     const theta = Math.random() * Math.PI * 2;
                     const phi = Math.acos((Math.random() * 2) - 1);
-                    const rad = Math.random() * 60 * scalar; // Huge radius for fly-through
+                    const rad = Math.random() * 60 * scalar; 
                     x = rad * Math.sin(phi) * Math.cos(theta); y = rad * Math.sin(phi) * Math.sin(theta); z = rad * Math.cos(phi);
                     size = Math.random();
                 }
@@ -499,14 +489,15 @@
                         triggerPushExit();
                     }
 
-                    // ZOOM LOGIC (INCREASED MAX SCALE FOR FLY-THROUGH)
+                    // ZOOM LOGIC (FLY THROUGH)
                     if(!STATE.isExiting) {
                         let targetScale = 1.0;
                         if(normPinch < 0.25) {
+                            // Pinch to Shrink
                             targetScale = 0.4 + (normPinch * 3.0);
                         } else {
-                            // Expand up to 25x to fly through the cloud
-                            targetScale = 1.0 + ((normPinch - 0.25) * 32.0);
+                            // Open Hand to Fly In (Scale up to 30.0)
+                            targetScale = 1.0 + ((normPinch - 0.25) * 15.0);
                         }
                         STATE.particleScale += (targetScale - STATE.particleScale) * 0.1;
                         STATE.particleRotY += (cursorSmoothing.x - 0.5) * 0.05;
@@ -570,9 +561,7 @@
         }
 
         function exitDetailView() {
-            // Step 1: Remove Annotation Panel
             document.getElementById('side-panel').classList.remove('active');
-            // Step 2: Shrink Planet
             gsap.delayedCall(0.4, () => {
                 gsap.to(STATE, { 
                     particleScale: 0, duration: 0.5, ease: "power2.in", 

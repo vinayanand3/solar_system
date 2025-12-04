@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Solar System V22: ULTRA BRIGHT</title>
+    <title>Solar System V23: HYBRID INPUT</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; cursor: none; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; cursor: none; user-select: none; }
         
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
 
@@ -21,7 +21,10 @@
             backdrop-filter: blur(15px); color: #fff;
             display: flex; gap: 30px; align-items: center;
             box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+            transition: border-color 0.3s;
         }
+        .hud-panel.mouse-mode { border-color: #ffaa00; }
+
         .stat-label { font-size: 10px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
         .stat-value { font-size: 16px; font-weight: 700; color: #fff; min-width: 120px; text-shadow: 0 0 10px rgba(255,255,255,0.8); }
 
@@ -47,9 +50,7 @@
             margin-top: 30px; font-size: 11px; color: #fff; letter-spacing: 1px;
             display: flex; gap: 15px; align-items: center;
         }
-        .hint-icon {
-            padding: 4px 8px; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; background: rgba(255,255,255,0.1);
-        }
+        .hint-icon { padding: 4px 8px; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; background: rgba(255,255,255,0.1); }
 
         @keyframes lockPulse {
             0% { box-shadow: 0 0 15px rgba(0, 255, 170, 0.4); transform: translate(-50%, -50%) scale(1.1); }
@@ -65,9 +66,10 @@
             z-index: 20;
             display: flex; align-items: center; justify-content: center;
             background: rgba(255, 255, 255, 0.1);
-            transition: border-color 0.2s, background-color 0.2s;
+            transition: border-color 0.2s, background-color 0.2s, opacity 0.3s;
             box-shadow: 0 0 15px rgba(255,255,255,0.2);
             will-change: left, top; 
+            opacity: 0; /* Hidden until input detected */
         }
         #finger-cursor.locked { 
             border-color: #00ffaa; 
@@ -82,13 +84,14 @@
             stroke: #00ffaa; 
         }
 
-        #input_video { position: absolute; opacity: 0; pointer-events: none; z-index: -1; width: 1px; height: 1px;}
+        #input_video { position: absolute; opacity: 0; pointer-events: none; z-index: -1; width: 640px; height: 480px;}
         
         #loader {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: #000; display: flex; flex-direction: column;
             align-items: center; justify-content: center; z-index: 999;
             transition: opacity 0.5s ease-out;
+            pointer-events: none;
         }
         
         #shockwave-ring {
@@ -96,13 +99,18 @@
             border: 10px solid #fff; border-radius: 50%;
             transform: translate(-50%, -50%); opacity: 0; pointer-events: none; z-index: 50;
         }
+
+        #mouse-badge {
+            display: none;
+            background: #ffaa00; color: #000; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 10px;
+        }
     </style>
 </head>
 <body>
 
     <div id="loader">
         <div style="color: white; letter-spacing: 8px; font-weight: 300; font-size: 24px;">SYSTEM INITIALIZING</div>
-        <div style="color: #666; font-size: 12px; margin-top:10px;">ALLOW CAMERA ACCESS</div>
+        <div id="loader-status" style="color: #666; font-size: 12px; margin-top:10px;">ESTABLISHING UPLINK...</div>
     </div>
     
     <div id="shockwave-ring"></div>
@@ -122,8 +130,16 @@
                 </div>
                 <div style="width: 1px; height: 30px; background: rgba(255,255,255,0.2);"></div>
                 <div>
+                    <div class="stat-label">Input Source</div>
+                    <div class="stat-value" id="input-source">
+                        <span id="source-text">SCANNING...</span>
+                        <span id="mouse-badge">MOUSE</span>
+                    </div>
+                </div>
+                <div style="width: 1px; height: 30px; background: rgba(255,255,255,0.2);"></div>
+                <div>
                     <div class="stat-label">Target Lock</div>
-                    <div class="stat-value" id="target-val" style="color: #00ffaa;">SCANNING...</div>
+                    <div class="stat-value" id="target-val" style="color: #00ffaa;">WAITING</div>
                 </div>
             </div>
         </div>
@@ -136,7 +152,7 @@
             <div class="data-row"><span class="data-key">Gravity</span><span class="data-val" id="p-grav">0</span></div>
             <div class="data-row"><span class="data-key">Satellites</span><span class="data-val" id="p-moons">0</span></div>
             
-            <div class="gesture-hint">
+            <div class="gesture-hint" id="gesture-hints">
                 <span class="hint-icon">PINCH</span> SHRINK
                 <span class="hint-icon" style="margin-left:10px;">OPEN</span> FLY IN
                 <span class="hint-icon" style="margin-left:10px;">PUSH</span> EXIT
@@ -146,6 +162,7 @@
 
     <video id="input_video" playsinline></video>
 
+    <!-- SHADERS (Unchanged from original) -->
     <script type="x-shader/x-vertex" id="planetVertex">
         uniform float uTime;
         uniform float uScale; 
@@ -162,40 +179,24 @@
 
         void main() {
             vec3 basePos = position;
-
-            // SATELLITE ORBIT LOGIC
             if(aIsMoon > 0.5) {
                 float angle = aOrbitOffset + uTime * aOrbitSpeed * 0.2; 
                 basePos.x += cos(angle) * aOrbitRad;
                 basePos.z += sin(angle) * aOrbitRad;
             }
-
-            // Apply Scale
             vec3 pos = basePos * uScale;
-
             vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
             gl_Position = projectionMatrix * mvPosition;
 
-            // --- BRIGHTNESS LOGIC ---
             float twinkle = sin(uTime * 3.0 + aRandom * 25.0);
             twinkle = smoothstep(-1.0, 1.0, twinkle);
-
-            float finalSize = aSize * (0.8 + 0.4 * twinkle); // Slight shimmer size
-
-            // KEY FIX: Massive Size Multiplier (6000.0 instead of 350.0)
-            // This compensates for the camera being at Z=850 instead of Z=40
+            float finalSize = aSize * (0.8 + 0.4 * twinkle); 
             float distFactor = 3000.0;
-            
-            // Zoom Logic: When scaling up (flying in), keep them manageable
-            // When scaling down, keep them big enough to see
             float zoomDamp = 1.0;
-            if(uScale > 2.0) {
-                 zoomDamp = 1.0 + (uScale * 0.1); // Grow slightly as we fly in
-            }
+            if(uScale > 2.0) { zoomDamp = 1.0 + (uScale * 0.1); }
 
             gl_PointSize = finalSize * (distFactor / -mvPosition.z) * zoomDamp;
-            
-            vAlpha = 0.5 + 0.5 * twinkle; // Higher base alpha
+            vAlpha = 0.5 + 0.5 * twinkle; 
             vColor = aColor; 
         }
     </script>
@@ -204,27 +205,15 @@
         uniform float uScale;
         varying float vAlpha;
         varying vec3 vColor;
-
         void main() {
             float r = length(gl_PointCoord - vec2(0.5));
             if (r > 0.5) discard;
-            
-            // Diamond Core Glow
             float glow = 1.0 - (r * 2.0);
-            glow = pow(glow, 2.0); // Soften the gradient slightly for more fill
-
-            // KEY FIX: Multiply vColor by 2.5 to overdrive the brightness
+            glow = pow(glow, 2.0); 
             vec3 intenseColor = vColor * 2.5; 
-            
-            // Add the hot white core
             vec3 finalColor = intenseColor + vec3(1.0) * pow(glow, 4.0); 
-
-            // Density Protection (Prevent white flashbang on fly-through)
             float densityFactor = 1.0;
-            if (uScale > 5.0) {
-                densityFactor = 1.0 / (uScale * 0.3);
-            }
-
+            if (uScale > 5.0) { densityFactor = 1.0 / (uScale * 0.3); }
             gl_FragColor = vec4(finalColor, vAlpha * glow * densityFactor);
         }
     </script>
@@ -238,7 +227,7 @@
             vPos = position; 
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
             gl_Position = projectionMatrix * mvPosition;
-            gl_PointSize = (25.0 + aRandom * 10.0) * (300.0 / -mvPosition.z); // Increased Sun Size
+            gl_PointSize = (25.0 + aRandom * 10.0) * (300.0 / -mvPosition.z); 
             vAlpha = 0.95;
         }
     </script>
@@ -287,10 +276,27 @@
             { name: "NEPTUNE", color: 0x2E67F8, pColor: "#4466ff", dist: 760, size: 8.5, moons: [{ name: "Triton", size: 5.5, color: "#ffcccc", dist: 160 }], desc: "Windy World.", realDia: "49,244 km", temp: "-200°C", grav: "11.15 m/s²" }
         ];
 
+        // --- GLOBAL STATE ---
         const STATE = {
-            mode: 'SOLAR', targetIndex: -1, hoverIndex: -1, selectionProgress: 0, 
-            particleScale: 1.0, particleRotY: 0, lastModeChange: 0,
-            lastHandSize: 0, isExiting: false
+            mode: 'SOLAR', // 'SOLAR' or 'DETAIL'
+            targetIndex: -1, 
+            hoverIndex: -1, 
+            selectionProgress: 0,
+            
+            // Rendering State
+            particleScale: 1.0,
+            
+            // Interaction State
+            inputMethod: 'NONE', // 'HAND' or 'MOUSE'
+            lastModeChange: 0,
+            lastHandSize: 0, 
+            isExiting: false,
+            
+            // Inertia & Rotation Logic
+            rotationY: 0,
+            rotationVelocity: 0,
+            isDragging: false,
+            lastInputX: 0
         };
         
         const cursorSmoothing = { x: 0.5, y: 0.5 };
@@ -417,32 +423,27 @@
                 const r = Math.random();
                 pIsMoon[i] = 0.0; 
                 pColor[i*3] = planetColor.r; pColor[i*3+1] = planetColor.g; pColor[i*3+2] = planetColor.b;
-                
-                // Scalar to make particles visible at camera Z 850
                 const scalar = 12.0; 
-
-                if(hasRings && r < 0.65) { // RINGS
+                if(hasRings && r < 0.65) { 
                     const angle = Math.random() * Math.PI * 2;
                     const dist = (Math.random() > 0.4 ? 14 + Math.random() * 9 : 10 + Math.random() * 2) * scalar;
                     x = Math.cos(angle)*dist; z = Math.sin(angle)*dist; y = (Math.random()-0.5)*3.0;
                     size = Math.random() * 2.5;
-                } else if ((hasRings && r < 0.80) || (!hasRings && r < 0.70)) { // PLANET
+                } else if ((hasRings && r < 0.80) || (!hasRings && r < 0.70)) { 
                     const theta = Math.random() * Math.PI * 2;
                     const phi = Math.acos((Math.random() * 2) - 1);
                     const rad = 7.5 * scalar;
                     x = rad * Math.sin(phi) * Math.cos(theta); y = rad * Math.sin(phi) * Math.sin(theta); z = rad * Math.cos(phi);
                     size = Math.random() * 3.0;
-                } else { // AMBIENT DUST
+                } else { 
                     const theta = Math.random() * Math.PI * 2;
                     const phi = Math.acos((Math.random() * 2) - 1);
                     const rad = Math.random() * 60 * scalar; 
                     x = rad * Math.sin(phi) * Math.cos(theta); y = rad * Math.sin(phi) * Math.sin(theta); z = rad * Math.cos(phi);
                     size = Math.random();
                 }
-
                 const tilt = 0.3;
                 const ty = y; y = y*Math.cos(tilt)-z*Math.sin(tilt); z = ty*Math.sin(tilt)+z*Math.cos(tilt);
-                
                 pPos[i*3] = x; pPos[i*3+1] = y; pPos[i*3+2] = z;
                 pSize[i] = size;
             }
@@ -452,42 +453,139 @@
             pGeo.attributes.aSize.needsUpdate = true;
         }
 
-        // --- INPUT LOGIC ---
+        // --- INPUT & INTERACTION SYSTEM ---
         const raycaster = new THREE.Raycaster(); 
         const pointer = new THREE.Vector2(); 
         raycaster.params.Points.threshold = 10;
-        
-        const videoElement = document.getElementById('input_video');
-        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`});
-        
-        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
         
         const cursor = document.getElementById('finger-cursor'); 
         const ringCircle = document.querySelector('.progress-ring__circle'); 
         const hudTarget = document.getElementById('target-val');
 
-        hands.onResults(results => {
-            document.getElementById('loader').style.opacity = 0;
+        function hideLoader() {
+            const l = document.getElementById('loader');
+            if(l.style.opacity !== '0') {
+                l.style.opacity = 0;
+                setTimeout(() => { l.style.display = 'none'; }, 500);
+            }
+        }
+
+        // 1. UNIFIED INPUT HANDLER (Handles both Hand and Mouse coordinates)
+        function updateCursor(rawX, rawY) {
+            // rawX, rawY should be 0.0 to 1.0 (screen space normalized)
             
+            // Smoothing
+            cursorSmoothing.x += (rawX - cursorSmoothing.x) * smoothingFactor; 
+            cursorSmoothing.y += (rawY - cursorSmoothing.y) * smoothingFactor;
+
+            // Update DOM Cursor
+            cursor.style.left = (cursorSmoothing.x * window.innerWidth) + 'px'; 
+            cursor.style.top = (cursorSmoothing.y * window.innerHeight) + 'px';
+            
+            // Update ThreeJS Pointer (-1 to +1)
+            pointer.x = (cursorSmoothing.x * 2) - 1; 
+            pointer.y = -(cursorSmoothing.y * 2) + 1;
+
+            const now = Date.now();
+
+            // LOGIC FOR SOLAR SYSTEM VIEW (Hover/Selection)
+            if(STATE.mode === 'SOLAR') {
+                checkIntersection();
+            } 
+            // LOGIC FOR DETAIL VIEW (Rotation)
+            else if(STATE.mode === 'DETAIL') {
+                
+                // Rotation Inertia Logic
+                if(STATE.isDragging) {
+                    const deltaX = cursorSmoothing.x - STATE.lastInputX;
+                    STATE.rotationVelocity = deltaX * 5.0; // Multiplier for sensitivity
+                    STATE.rotationY += STATE.rotationVelocity;
+                }
+                
+                STATE.lastInputX = cursorSmoothing.x;
+            }
+        }
+
+        // 2. MOUSE EVENT LISTENERS (Fallback)
+        function activateMouseMode() {
+            if(STATE.inputMethod === 'MOUSE') return; // Already active
+            
+            STATE.inputMethod = 'MOUSE';
+            document.getElementById('source-text').innerText = "MANUAL OVERRIDE";
+            document.getElementById('mouse-badge').style.display = "inline-block";
+            document.getElementById('main-hud').classList.add('mouse-mode');
+            document.getElementById('loader-status').innerText = "CAMERA ACCESS DENIED. ENGAGING MOUSE CONTROL.";
+            
+            // Update hints for mouse
+            document.getElementById('gesture-hints').innerHTML = `
+                <span class="hint-icon">SCROLL</span> ZOOM
+                <span class="hint-icon" style="margin-left:10px;">DRAG</span> ROTATE
+                <span class="hint-icon" style="margin-left:10px;">R-CLICK</span> EXIT
+            `;
+
+            setTimeout(hideLoader, 1500); // Small delay to read the error message
+            cursor.style.opacity = 1;
+
+            window.addEventListener('mousemove', (e) => {
+                updateCursor(e.clientX / window.innerWidth, e.clientY / window.innerHeight);
+            });
+
+            window.addEventListener('mousedown', (e) => {
+                if(e.button === 0) { // Left Click
+                    STATE.isDragging = true;
+                    STATE.lastInputX = cursorSmoothing.x;
+                    // Instant Select in Mouse Mode
+                    if(STATE.mode === 'SOLAR' && STATE.hoverIndex !== -1) {
+                         enterDetailView(STATE.hoverIndex);
+                    }
+                }
+                if(e.button === 2 && STATE.mode === 'DETAIL') { // Right Click
+                   triggerPushExit();
+                }
+            });
+
+            window.addEventListener('mouseup', () => { STATE.isDragging = false; });
+            
+            window.addEventListener('wheel', (e) => {
+                if(STATE.mode === 'DETAIL') {
+                    // Map scroll to particle scale (Zoom)
+                    const zoomDir = e.deltaY > 0 ? -1 : 1;
+                    STATE.particleScale += zoomDir * 0.1;
+                    STATE.particleScale = Math.max(0.1, Math.min(STATE.particleScale, 5.0));
+                }
+            });
+            
+            // Disable context menu for right click
+            window.addEventListener('contextmenu', e => e.preventDefault());
+        }
+
+        // 3. MEDIAPIPE HANDLER
+        const videoElement = document.getElementById('input_video');
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`});
+        
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        
+        hands.onResults(results => {
+            if(STATE.inputMethod === 'MOUSE') return; // Ignore hands if mouse mode is forced
+            
+            hideLoader();
+            STATE.inputMethod = 'HAND';
+            document.getElementById('source-text').innerText = "NEURAL UPLINK";
+
             if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 cursor.style.opacity = 1; 
                 const lm = results.multiHandLandmarks[0]; 
-                const index = lm[8]; const thumb = lm[4]; const wrist = lm[0]; const middleMCP = lm[9];
+                const index = lm[8]; const thumb = lm[4]; const middleMCP = lm[9]; const wrist = lm[0];
 
-                cursorSmoothing.x += (index.x - cursorSmoothing.x) * smoothingFactor; 
-                cursorSmoothing.y += (index.y - cursorSmoothing.y) * smoothingFactor;
-                cursor.style.left = (1 - cursorSmoothing.x) * window.innerWidth + 'px'; 
-                cursor.style.top = cursorSmoothing.y * window.innerHeight + 'px';
-                pointer.x = ((1 - cursorSmoothing.x) * 2) - 1; pointer.y = -(cursorSmoothing.y * 2) + 1;
-                
+                // Convert MediaPipe coords (mirrored) to Screen Coords
+                // MediaPipe x is 0 (left) to 1 (right), but usually mirrored video needs flipping
+                // We'll flip x: (1 - index.x)
+                updateCursor(1 - index.x, index.y);
+
                 const now = Date.now();
 
-                // SYSTEM VIEW LOGIC
-                if(STATE.mode === 'SOLAR') {
-                    checkIntersection(index);
-                } 
-                // DETAIL LOGIC
-                else if(STATE.mode === 'DETAIL') {
+                // HAND GESTURES FOR DETAIL VIEW
+                if(STATE.mode === 'DETAIL') {
                     if(now - STATE.lastModeChange < 1500) {
                         STATE.lastHandSize = Math.hypot(middleMCP.x - wrist.x, middleMCP.y - wrist.y);
                         return;
@@ -497,7 +595,10 @@
                     const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
                     let normPinch = Math.min(1.0, pinchDist / handSize); 
 
-                    // PUSH DETECTION
+                    // Hand Drag State (Pinched = Dragging)
+                    STATE.isDragging = (normPinch < 0.2); 
+
+                    // PUSH EXIT (Depth check)
                     const zVelocity = handSize - STATE.lastHandSize;
                     STATE.lastHandSize = handSize;
 
@@ -505,30 +606,44 @@
                         triggerPushExit();
                     }
 
-                    // ZOOM LOGIC (FLY THROUGH)
+                    // ZOOM (Open hand vs Closed hand)
                     if(!STATE.isExiting) {
                         let targetScale = 1.0;
                         if(normPinch < 0.25) {
-                            // Pinch to Shrink
                             targetScale = 0.4 + (normPinch * 3.0);
                         } else {
-                            // Open Hand to Fly In (Scale up to 30.0)
                             targetScale = 1.0 + ((normPinch - 0.25) * 10.0);
                         }
                         STATE.particleScale += (targetScale - STATE.particleScale) * 0.1;
-                        STATE.particleRotY += (cursorSmoothing.x - 0.5) * 0.05;
                     }
                 }
             } else {
+                // No hands detected
                 cursor.style.opacity = 0;
+                STATE.isDragging = false;
                 if(STATE.mode === 'SOLAR') {
                     if(STATE.selectionProgress > 0) { STATE.selectionProgress -= 0.02; applyProgressVisuals(); } else { resetSelection(); }
                 }
             }
         });
 
+        // 4. CAMERA INITIALIZATION WITH FALLBACK
         const cameraUtils = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 640, height: 480 }); 
-        cameraUtils.start();
+        
+        // Strict Camera Check
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(() => {
+                cameraUtils.start().catch(err => {
+                    console.error("MediaPipe Error:", err);
+                    activateMouseMode();
+                });
+            })
+            .catch(err => {
+                console.warn("Camera Access Denied:", err);
+                activateMouseMode();
+            });
+
+        // --- APP LOGIC ---
 
         function triggerPushExit() {
             STATE.isExiting = true;
@@ -540,7 +655,7 @@
             exitDetailView();
         }
 
-        function checkIntersection(rawFingerTip) {
+        function checkIntersection() {
             raycaster.setFromCamera(pointer, camera);
             const intersects = raycaster.intersectObjects(hitMeshes);
             if (intersects.length > 0) {
@@ -554,7 +669,11 @@
             STATE.selectionProgress = Math.max(0, Math.min(1, STATE.selectionProgress));
             applyProgressVisuals();
             ringCircle.style.strokeDashoffset = 163 - (STATE.selectionProgress * 163);
-            if (STATE.selectionProgress >= 1.0 && STATE.mode === 'SOLAR') enterDetailView(STATE.hoverIndex);
+            
+            // Trigger selection (Hands only - Mouse clicks instantly)
+            if (STATE.inputMethod === 'HAND' && STATE.selectionProgress >= 1.0 && STATE.mode === 'SOLAR') {
+                enterDetailView(STATE.hoverIndex);
+            }
         }
 
         function applyProgressVisuals() {
@@ -562,7 +681,7 @@
             planetMeshes.forEach((mesh, i) => { if(i === STATE.hoverIndex) mesh.scale.setScalar(1.0 + (p * 1.5)); else mesh.scale.setScalar(Math.max(0, 1.0 - p)); });
         }
         function resetSelection() {
-            STATE.hoverIndex = -1; STATE.selectionProgress = 0; hudTarget.innerText = "SCANNING..."; cursor.classList.remove('locked'); ringCircle.style.strokeDashoffset = 163;
+            STATE.hoverIndex = -1; STATE.selectionProgress = 0; hudTarget.innerText = "WAITING"; cursor.classList.remove('locked'); ringCircle.style.strokeDashoffset = 163;
             sunParticles.scale.setScalar(1); planetMeshes.forEach(mesh => mesh.scale.setScalar(1));
         }
         function enterDetailView(index) {
@@ -574,6 +693,9 @@
             const d = PLANET_DATA[index]; document.getElementById('p-name').innerText = d.name; document.getElementById('p-name').style.color = d.pColor; document.getElementById('side-panel').classList.add('active');
             document.getElementById('p-diam').innerText = d.realDia; document.getElementById('p-temp').innerText = d.temp; document.getElementById('p-grav').innerText = d.grav;
             document.getElementById('p-moons').innerText = d.moons.length > 0 ? d.moons.length + " (Major)" : "None";
+            
+            // Reset rotation
+            STATE.rotationY = 0; STATE.rotationVelocity = 0;
         }
 
         function exitDetailView() {
@@ -591,14 +713,24 @@
         
         function animate() {
             requestAnimationFrame(animate); const time = performance.now() * 0.001;
+            
             if(STATE.mode === 'SOLAR') { 
                 solarGroup.rotation.y = Math.sin(time * 0.02) * 0.05; 
                 sunParticles.rotation.y -= 0.005; 
                 sunMat.uniforms.uTime.value = time; 
             } else { 
+                // Detail View Logic
                 pMat.uniforms.uTime.value = time; 
                 pMat.uniforms.uScale.value += (STATE.particleScale - pMat.uniforms.uScale.value) * 0.1; 
-                particleSystem.rotation.y += (STATE.particleRotY - particleSystem.rotation.y) * 0.1; 
+                
+                // --- INERTIA LOGIC ---
+                // If not dragging, apply friction (Damping)
+                if(!STATE.isDragging) {
+                    STATE.rotationVelocity *= 0.95; // 5% speed loss per frame
+                }
+                STATE.rotationY += STATE.rotationVelocity;
+                
+                particleSystem.rotation.y = STATE.rotationY;
             }
             renderer.render(scene, camera);
         }

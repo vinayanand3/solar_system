@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Solar System V20: High Intensity</title>
+    <title>Solar System V22: ULTRA BRIGHT</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; cursor: none; }
         
@@ -163,53 +163,69 @@
         void main() {
             vec3 basePos = position;
 
-            // SATELLITE ORBIT
+            // SATELLITE ORBIT LOGIC
             if(aIsMoon > 0.5) {
                 float angle = aOrbitOffset + uTime * aOrbitSpeed * 0.2; 
                 basePos.x += cos(angle) * aOrbitRad;
                 basePos.z += sin(angle) * aOrbitRad;
             }
 
-            // Linear Zoom (Fly Through)
+            // Apply Scale
             vec3 pos = basePos * uScale;
 
             vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
             gl_Position = projectionMatrix * mvPosition;
 
-            // --- EXACT TWINKLE MATH FROM SAMPLE ---
+            // --- BRIGHTNESS LOGIC ---
             float twinkle = sin(uTime * 3.0 + aRandom * 25.0);
             twinkle = smoothstep(-1.0, 1.0, twinkle);
 
-            // Dynamic Sizing
-            float sizeMult = 450.0;
-            // Boost size when scaling up to simulate being inside the dust cloud
-            float zoomBoost = 1.0 + max(0.0, uScale - 3.0) * 0.3; 
+            float finalSize = aSize * (0.8 + 0.4 * twinkle); // Slight shimmer size
 
-            gl_PointSize = (aSize * (0.6 + 0.6 * twinkle)) * (sizeMult / -mvPosition.z) * zoomBoost;
+            // KEY FIX: Massive Size Multiplier (6000.0 instead of 350.0)
+            // This compensates for the camera being at Z=850 instead of Z=40
+            float distFactor = 3000.0;
             
-            vAlpha = 0.3 + 0.7 * twinkle;
+            // Zoom Logic: When scaling up (flying in), keep them manageable
+            // When scaling down, keep them big enough to see
+            float zoomDamp = 1.0;
+            if(uScale > 2.0) {
+                 zoomDamp = 1.0 + (uScale * 0.1); // Grow slightly as we fly in
+            }
+
+            gl_PointSize = finalSize * (distFactor / -mvPosition.z) * zoomDamp;
+            
+            vAlpha = 0.5 + 0.5 * twinkle; // Higher base alpha
             vColor = aColor; 
         }
     </script>
     
     <script type="x-shader/x-fragment" id="planetFragment">
+        uniform float uScale;
         varying float vAlpha;
         varying vec3 vColor;
+
         void main() {
             float r = length(gl_PointCoord - vec2(0.5));
             if (r > 0.5) discard;
             
-            // Core Glow
+            // Diamond Core Glow
             float glow = 1.0 - (r * 2.0);
-            glow = pow(glow, 2.5); 
+            glow = pow(glow, 2.0); // Soften the gradient slightly for more fill
 
-            // Boost Base Color intensity to prevent "dullness"
-            vec3 intenseColor = vColor * 1.5;
+            // KEY FIX: Multiply vColor by 2.5 to overdrive the brightness
+            vec3 intenseColor = vColor * 2.5; 
+            
+            // Add the hot white core
+            vec3 finalColor = intenseColor + vec3(1.0) * pow(glow, 4.0); 
 
-            // Add Hot White Core (from sample code)
-            vec3 finalColor = intenseColor + vec3(0.8) * pow(glow, 5.0); 
+            // Density Protection (Prevent white flashbang on fly-through)
+            float densityFactor = 1.0;
+            if (uScale > 5.0) {
+                densityFactor = 1.0 / (uScale * 0.3);
+            }
 
-            gl_FragColor = vec4(finalColor, vAlpha * glow);
+            gl_FragColor = vec4(finalColor, vAlpha * glow * densityFactor);
         }
     </script>
 
@@ -222,7 +238,7 @@
             vPos = position; 
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
             gl_Position = projectionMatrix * mvPosition;
-            gl_PointSize = (15.0 + aRandom * 8.0) * (300.0 / -mvPosition.z);
+            gl_PointSize = (25.0 + aRandom * 10.0) * (300.0 / -mvPosition.z); // Increased Sun Size
             vAlpha = 0.95;
         }
     </script>
@@ -497,7 +513,7 @@
                             targetScale = 0.4 + (normPinch * 3.0);
                         } else {
                             // Open Hand to Fly In (Scale up to 30.0)
-                            targetScale = 1.0 + ((normPinch - 0.25) * 15.0);
+                            targetScale = 1.0 + ((normPinch - 0.25) * 10.0);
                         }
                         STATE.particleScale += (targetScale - STATE.particleScale) * 0.1;
                         STATE.particleRotY += (cursorSmoothing.x - 0.5) * 0.05;

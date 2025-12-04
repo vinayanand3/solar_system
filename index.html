@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Solar System V9: Proximity Exit</title>
+    <title>Solar System V10: Satellites & Grand Scale</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; cursor: none; }
         
@@ -42,7 +42,6 @@
         .data-key { color: #666; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
         .data-val { font-family: 'Courier New', monospace; font-size: 16px; color: #fff; text-shadow: 0 0 5px rgba(255,255,255,0.3); }
 
-        /* CURSOR */
         #finger-cursor {
             position: absolute; width: 60px; height: 60px;
             border: 2px solid rgba(255, 255, 255, 0.2);
@@ -59,15 +58,6 @@
             transform: translate(-50%, -50%) scale(1.1);
         }
         
-        /* Safe Zone indicator (Optional visual aid, currently invisible) */
-        #safe-zone {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 70%; height: 70%;
-            border: 1px dashed rgba(255, 255, 255, 0.0);
-            pointer-events: none;
-            border-radius: 20px;
-        }
-
         .progress-ring { position: absolute; width: 100%; height: 100%; transform: rotate(-90deg); }
         .progress-ring__circle {
             transition: stroke-dashoffset 0.1s linear;
@@ -88,11 +78,10 @@
 <body>
 
     <div id="loader">
-        <div style="color: white; letter-spacing: 8px; font-weight: 300; font-size: 24px;">CALIBRATING SENSORS</div>
+        <div style="color: white; letter-spacing: 8px; font-weight: 300; font-size: 24px;">LOADING STAR CHART</div>
     </div>
 
     <div id="ui-layer">
-        <div id="safe-zone"></div>
         <div id="finger-cursor">
             <svg class="progress-ring" width="60" height="60">
                 <circle class="progress-ring__circle" stroke-width="4" fill="transparent" r="26" cx="30" cy="30" stroke-dasharray="163" stroke-dashoffset="163" />
@@ -119,6 +108,7 @@
             <div class="data-row"><span class="data-key">Diameter</span><span class="data-val" id="p-diam">0</span></div>
             <div class="data-row"><span class="data-key">Temp</span><span class="data-val" id="p-temp">0</span></div>
             <div class="data-row"><span class="data-key">Gravity</span><span class="data-val" id="p-grav">0</span></div>
+            <div class="data-row"><span class="data-key">Satellites</span><span class="data-val" id="p-moons">0</span></div>
             <div style="margin-top: 30px; font-size: 11px; color: #555; letter-spacing: 1px;">PINCH TO ZOOM • MOVE AWAY TO EXIT</div>
         </div>
     </div>
@@ -130,17 +120,43 @@
         uniform float uScale;
         attribute float aRandom;
         attribute float aSize;
+        
+        // New attributes for moons
+        attribute float aIsMoon;
+        attribute float aOrbitRad;
+        attribute float aOrbitSpeed;
+        attribute float aOrbitOffset;
+
         varying float vAlpha;
         varying vec3 vColorVariation;
+
         void main() {
-            vec3 pos = position * uScale;
+            vec3 basePos = position;
+
+            // SATELLITE LOGIC: If it's a moon, calculate orbital position based on time
+            if(aIsMoon > 0.5) {
+                float angle = aOrbitOffset + uTime * aOrbitSpeed * 0.3; // 0.3 slows down orbit speed
+                basePos.x = cos(angle) * aOrbitRad;
+                basePos.z = sin(angle) * aOrbitRad;
+                basePos.y *= 0.2; // Flatten orbits slightly
+            }
+
+            // Apply uniform scale (for pinch zoom and transition)
+            vec3 pos = basePos * uScale;
+
             vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
             gl_Position = projectionMatrix * mvPosition;
+
             float twinkle = sin(uTime * 4.0 + aRandom * 100.0);
             twinkle = smoothstep(-0.5, 1.0, twinkle);
-            gl_PointSize = (aSize * (0.8 + 0.6 * twinkle)) * (600.0 / -mvPosition.z);
+
+            // Moons are slightly smaller, planet body larger
+            float sizeMult = (aIsMoon > 0.5) ? 350.0 : 600.0; 
+            gl_PointSize = (aSize * (0.8 + 0.6 * twinkle)) * (sizeMult / -mvPosition.z);
+            
             vAlpha = 0.6 + 0.4 * twinkle;
-            vColorVariation = vec3(1.0, 1.0 - aRandom * 0.3, 1.0); 
+            // Moons are slightly whiter
+            vColorVariation = (aIsMoon > 0.5) ? vec3(1.0) : vec3(1.0, 1.0 - aRandom * 0.3, 1.0); 
         }
     </script>
     <script type="x-shader/x-fragment" id="planetFragment">
@@ -158,6 +174,7 @@
             gl_FragColor = vec4(finalColor, vAlpha * glow);
         }
     </script>
+
     <script type="x-shader/x-vertex" id="sunVertex">
         uniform float uTime;
         attribute float aRandom;
@@ -168,7 +185,7 @@
             vec3 pos = position; 
             vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
             gl_Position = projectionMatrix * mvPosition;
-            gl_PointSize = (12.0 + aRandom * 5.0) * (300.0 / -mvPosition.z);
+            gl_PointSize = (15.0 + aRandom * 8.0) * (300.0 / -mvPosition.z);
             vAlpha = 0.9;
         }
     </script>
@@ -205,76 +222,49 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
 
     <script>
-        // --- DATA ---
+        // --- DATA: HUGE SCALE & MOON COUNTS ---
+        // Distances approx 3x larger. Sizes approx 50% larger.
         const PLANET_DATA = [
-            { name: "MERCURY", color: 0xAAAAAA, particleColor: new THREE.Color("#e0e0e0"), dist: 60, size: 2.8,  desc: "The smallest planet.", realDia: "4,879 km", temp: "167°C", grav: "3.7 m/s²" },
-            { name: "VENUS",   color: 0xE3BB76, particleColor: new THREE.Color("#ffdd88"), dist: 90, size: 3.8,  desc: "Hottest planet.", realDia: "12,104 km", temp: "464°C", grav: "8.87 m/s²" },
-            { name: "EARTH",   color: 0x2233FF, particleColor: new THREE.Color("#00aaff"), dist: 120, size: 4.0,  desc: "Our home.", realDia: "12,742 km", temp: "15°C", grav: "9.8 m/s²" },
-            { name: "MARS",    color: 0xFF4500, particleColor: new THREE.Color("#ff5533"), dist: 150, size: 3.2,  desc: "The Red Planet.", realDia: "6,779 km", temp: "-65°C", grav: "3.71 m/s²" },
-            { name: "JUPITER", color: 0xD9A066, particleColor: new THREE.Color("#ffaa55"), dist: 200, size: 8.5,  desc: "Gas Giant.", realDia: "139,820 km", temp: "-110°C", grav: "24.79 m/s²" },
-            { name: "SATURN",  color: 0xF4D03F, particleColor: new THREE.Color("#ffee88"), dist: 260, size: 7.5,  rings: true, desc: "Ringed Jewel.", realDia: "116,460 km", temp: "-140°C", grav: "10.44 m/s²" },
-            { name: "URANUS",  color: 0x4FD0E7, particleColor: new THREE.Color("#66ffff"), dist: 310, size: 5.5, rings: true, desc: "Ice Giant.", realDia: "50,724 km", temp: "-195°C", grav: "8.69 m/s²" },
-            { name: "NEPTUNE", color: 0x2E67F8, particleColor: new THREE.Color("#4466ff"), dist: 360, size: 5.2, desc: "Windy World.", realDia: "49,244 km", temp: "-200°C", grav: "11.15 m/s²" }
+            { name: "MERCURY", color: 0xAAAAAA, particleColor: new THREE.Color("#e0e0e0"), dist: 100, size: 4.5,  moonCount: 0, desc: "The smallest planet.", realDia: "4,879 km", temp: "167°C", grav: "3.7 m/s²" },
+            { name: "VENUS",   color: 0xE3BB76, particleColor: new THREE.Color("#ffdd88"), dist: 160, size: 6.0,  moonCount: 0, desc: "Hottest planet.", realDia: "12,104 km", temp: "464°C", grav: "8.87 m/s²" },
+            { name: "EARTH",   color: 0x2233FF, particleColor: new THREE.Color("#00aaff"), dist: 220, size: 6.5,  moonCount: 1, desc: "Our home.", realDia: "12,742 km", temp: "15°C", grav: "9.8 m/s²" },
+            { name: "MARS",    color: 0xFF4500, particleColor: new THREE.Color("#ff5533"), dist: 280, size: 5.0,  moonCount: 2, desc: "The Red Planet.", realDia: "6,779 km", temp: "-65°C", grav: "3.71 m/s²" },
+            { name: "JUPITER", color: 0xD9A066, particleColor: new THREE.Color("#ffaa55"), dist: 400, size: 14.0, moonCount: 8, desc: "Gas Giant (80+ moons).", realDia: "139,820 km", temp: "-110°C", grav: "24.79 m/s²" },
+            { name: "SATURN",  color: 0xF4D03F, particleColor: new THREE.Color("#ffee88"), dist: 520, size: 12.0, moonCount: 6, rings: true, desc: "Ringed Jewel (80+ moons).", realDia: "116,460 km", temp: "-140°C", grav: "10.44 m/s²" },
+            { name: "URANUS",  color: 0x4FD0E7, particleColor: new THREE.Color("#66ffff"), dist: 640, size: 9.0,  moonCount: 4, rings: true, desc: "Ice Giant (27 moons).", realDia: "50,724 km", temp: "-195°C", grav: "8.69 m/s²" },
+            { name: "NEPTUNE", color: 0x2E67F8, particleColor: new THREE.Color("#4466ff"), dist: 760, size: 8.5,  moonCount: 3, desc: "Windy World (14 moons).", realDia: "49,244 km", temp: "-200°C", grav: "11.15 m/s²" }
         ];
 
         const STATE = {
-            mode: 'SOLAR',
-            targetIndex: -1,
-            hoverIndex: -1,
-            selectionProgress: 0,
-            particleScale: 1.0,
-            particleRotY: 0,
-            lastModeChange: 0
+            mode: 'SOLAR', targetIndex: -1, hoverIndex: -1, selectionProgress: 0, particleScale: 1.0, particleRotY: 0, lastModeChange: 0
         };
-
         const cursorSmoothing = { x: 0.5, y: 0.5 };
         const smoothingFactor = 0.15;
 
-        // --- THREE.JS ---
+        // --- THREE.JS SETUP ---
         const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x000000, 0.0005);
-        
-        const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 5000);
-        camera.position.set(0, 180, 480);
+        scene.fog = new THREE.FogExp2(0x000000, 0.0002); // Very very light fog for huge distances
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 10000);
+        // Camera pulled way back for new scale
+        camera.position.set(0, 300, 850);
         camera.lookAt(0, 0, 0);
-
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         document.body.appendChild(renderer.domElement);
-
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); 
-        scene.add(ambientLight);
-        const sunLight = new THREE.PointLight(0xffaa00, 4.0, 1000);
-        scene.add(sunLight);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        scene.add(new THREE.PointLight(0xffaa00, 4.0, 2000));
 
         // --- SOLAR GROUP ---
         const solarGroup = new THREE.Group();
-        solarGroup.position.x = -60; // Left align
+        solarGroup.position.x = -100; // Shift left due to massive size
         scene.add(solarGroup);
 
         // SUN
-        const sunParticleCount = 20000;
-        const sunGeo = new THREE.BufferGeometry();
-        const sunPos = new Float32Array(sunParticleCount * 3);
-        const sunRnd = new Float32Array(sunParticleCount);
-        for(let i=0; i<sunParticleCount; i++) {
-            const theta = Math.random() * Math.PI * 2;
-            const phi = Math.acos(2 * Math.random() - 1);
-            const r = 30; 
-            sunPos[i*3] = r * Math.sin(phi) * Math.cos(theta);
-            sunPos[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
-            sunPos[i*3+2] = r * Math.cos(phi);
-            sunRnd[i] = Math.random();
-        }
-        sunGeo.setAttribute('position', new THREE.BufferAttribute(sunPos, 3));
-        sunGeo.setAttribute('aRandom', new THREE.BufferAttribute(sunRnd, 1));
+        const sunGeo = new THREE.SphereGeometry(45, 64, 64); // Larger Sun base
+        // We use sphere geometry vertices for the sun particles now for better coverage
         const sunMat = new THREE.ShaderMaterial({
-            uniforms: { 
-                uTime: { value: 0 },
-                uColorCore: { value: new THREE.Color("#ffcc00") },
-                uColorRim: { value: new THREE.Color("#ff4400") }
-            },
+            uniforms: { uTime: { value: 0 }, uColorCore: { value: new THREE.Color("#ffcc00") }, uColorRim: { value: new THREE.Color("#ff4400") } },
             vertexShader: document.getElementById('sunVertex').textContent,
             fragmentShader: document.getElementById('sunFragment').textContent,
             transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
@@ -285,55 +275,50 @@
         // PLANETS
         const planetMeshes = [];
         const hitMeshes = [];
-
         PLANET_DATA.forEach((p, i) => {
             const container = new THREE.Group();
-            const mesh = new THREE.Mesh(
-                new THREE.SphereGeometry(p.size, 32, 32),
-                new THREE.MeshStandardMaterial({ color: p.color, roughness: 0.6, metalness: 0.2 })
-            );
+            const mesh = new THREE.Mesh(new THREE.SphereGeometry(p.size, 32, 32), new THREE.MeshStandardMaterial({ color: p.color, roughness: 0.6, metalness: 0.2 }));
             if(p.rings) {
-                const r = new THREE.Mesh(new THREE.RingGeometry(p.size*1.4, p.size*2.2, 32), new THREE.MeshBasicMaterial({ color: 0xcccccc, side: THREE.DoubleSide, transparent: true, opacity: 0.5 }));
+                const r = new THREE.Mesh(new THREE.RingGeometry(p.size*1.4, p.size*2.2, 64), new THREE.MeshBasicMaterial({ color: 0xcccccc, side: THREE.DoubleSide, transparent: true, opacity: 0.5 }));
                 r.rotation.x = Math.PI/2.2; mesh.add(r);
             }
             container.add(mesh);
-
             const hitGeo = new THREE.SphereGeometry(p.size * 5.0, 16, 16); 
-            const hitMat = new THREE.MeshBasicMaterial({ visible: false }); 
-            const hitMesh = new THREE.Mesh(hitGeo, hitMat);
+            const hitMesh = new THREE.Mesh(hitGeo, new THREE.MeshBasicMaterial({ visible: false }));
             hitMesh.userData = { id: i, name: p.name };
             container.add(hitMesh);
             hitMeshes.push(hitMesh);
-
             const angleStep = (Math.PI * 1.2) / (PLANET_DATA.length - 1);
             const angle = (i * angleStep) - (Math.PI * 0.6);
             container.position.set(p.dist * Math.sin(angle), 0, p.dist * Math.cos(angle) * 0.3);
-            
             solarGroup.add(container);
             planetMeshes.push(container);
         });
 
-        const stars = new THREE.Points(
-            new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(8000 * 3).map(()=>(Math.random()-0.5)*2000), 3)),
-            new THREE.PointsMaterial({color:0xffffff, size:1.0, transparent:true, opacity:0.5})
-        );
-        scene.add(stars);
+        scene.add(new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(10000 * 3).map(()=>(Math.random()-0.5)*4000), 3)), new THREE.PointsMaterial({color:0xffffff, size:1.5, transparent:true, opacity:0.5})));
 
-        const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,0)]);
-        const lineMat = new THREE.LineBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0, linewidth: 2 });
-        const rayLine = new THREE.Line(lineGeo, lineMat);
-        scene.add(rayLine);
-
-        // --- DETAIL PARTICLES ---
-        const particleCount = 80000; 
+        // --- DETAIL PARTICLES (UPDATED FOR SATELLITES) ---
+        const particleCount = 100000; // More particles for bigger planets + moons
         const pGeo = new THREE.BufferGeometry();
         const pPos = new Float32Array(particleCount * 3);
         const pRnd = new Float32Array(particleCount);
         const pSize = new Float32Array(particleCount);
-        for(let i=0; i<particleCount; i++) { pPos[i*3]=0; pRnd[i]=Math.random(); pSize[i]=1.0; }
+        
+        // New Buffers for Moons
+        const pIsMoon = new Float32Array(particleCount);
+        const pOrbitRad = new Float32Array(particleCount);
+        const pOrbitSpeed = new Float32Array(particleCount);
+        const pOrbitOffset = new Float32Array(particleCount);
+
+        for(let i=0; i<particleCount; i++) { pPos[i*3]=0; pRnd[i]=Math.random(); pSize[i]=1.0; pIsMoon[i]=0; }
         pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
         pGeo.setAttribute('aRandom', new THREE.BufferAttribute(pRnd, 1));
         pGeo.setAttribute('aSize', new THREE.BufferAttribute(pSize, 1));
+        // Add new attributes
+        pGeo.setAttribute('aIsMoon', new THREE.BufferAttribute(pIsMoon, 1));
+        pGeo.setAttribute('aOrbitRad', new THREE.BufferAttribute(pOrbitRad, 1));
+        pGeo.setAttribute('aOrbitSpeed', new THREE.BufferAttribute(pOrbitSpeed, 1));
+        pGeo.setAttribute('aOrbitOffset', new THREE.BufferAttribute(pOrbitOffset, 1));
 
         const pMat = new THREE.ShaderMaterial({
             uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color("#00d2ff") }, uScale: { value: 0.0 } },
@@ -347,229 +332,148 @@
 
         function generatePlanetParticles(index) {
             const data = PLANET_DATA[index];
-            const baseRad = 70.0; 
-            for(let i=0; i<particleCount; i++) {
+            const hasRings = data.rings;
+            const baseRad = 80.0; // Huge planet radius
+            const moonCount = data.moonCount;
+            
+            let particlesUsed = 0;
+
+            // 1. GENERATE MOONS (Clusters of particles)
+            if(moonCount > 0) {
+                const particlesPerMoon = 500;
+                for(let m=0; m<moonCount; m++) {
+                    // Moon properties
+                    const orbitRad = baseRad * 2.0 + Math.random() * baseRad * 3.0;
+                    const orbitSpeed = (Math.random() > 0.5 ? 1 : -1) * (0.5 + Math.random() * 1.0);
+                    const orbitOffset = Math.random() * Math.PI * 2;
+
+                    for(let i=0; i<particlesPerMoon; i++) {
+                        const idx = particlesUsed + i;
+                        // Scatter particles slightly around the moon's center point
+                        pPos[idx*3] = (Math.random()-0.5)*10.0;
+                        pPos[idx*3+1] = (Math.random()-0.5)*2.0;
+                        pPos[idx*3+2] = (Math.random()-0.5)*10.0;
+                        pIsMoon[idx] = 1.0; // Flag as moon
+                        pOrbitRad[idx] = orbitRad;
+                        pOrbitSpeed[idx] = orbitSpeed;
+                        pOrbitOffset[idx] = orbitOffset;
+                    }
+                    particlesUsed += particlesPerMoon;
+                }
+            }
+
+            // 2. GENERATE PLANET BODY & RINGS (Remaining particles)
+            for(let i=particlesUsed; i<particleCount; i++) {
                 let x,y,z,s;
                 const r = Math.random();
-                if(data.rings && r < 0.4) {
+                pIsMoon[i] = 0.0; // Not a moon
+
+                if(hasRings && r < 0.45) { // Rings
                     const angle = Math.random() * Math.PI * 2;
-                    const dist = (baseRad * 1.3) + Math.random() * (baseRad * 0.8);
-                    x = Math.cos(angle)*dist; z = Math.sin(angle)*dist; y = (Math.random()-0.5)*2.0;
+                    const dist = (baseRad * 1.2) + Math.random() * (baseRad * 1.0);
+                    x = Math.cos(angle)*dist; z = Math.sin(angle)*dist; y = (Math.random()-0.5)*3.0;
                     s = Math.random() * 2.5;
-                } else {
+                } else { // Sphere
                     const theta = Math.random()*Math.PI*2;
                     const phi = Math.acos(2*Math.random()-1);
                     x=baseRad*Math.sin(phi)*Math.cos(theta); y=baseRad*Math.sin(phi)*Math.sin(theta); z=baseRad*Math.cos(phi);
                     s = Math.random() * 3.5; 
                 }
-                const tilt = 0.4;
+                const tilt = 0.3;
                 const ty = y; y = y*Math.cos(tilt)-z*Math.sin(tilt); z = ty*Math.sin(tilt)+z*Math.cos(tilt);
                 pPos[i*3] = x; pPos[i*3+1] = y; pPos[i*3+2] = z;
             }
+
             pGeo.attributes.position.needsUpdate = true;
+            pGeo.attributes.aIsMoon.needsUpdate = true;
+            pGeo.attributes.aOrbitRad.needsUpdate = true;
+            pGeo.attributes.aOrbitSpeed.needsUpdate = true;
+            pGeo.attributes.aOrbitOffset.needsUpdate = true;
+
             pMat.uniforms.uColor.value = data.particleColor;
         }
 
-        // --- INPUT & LOGIC ---
-        const raycaster = new THREE.Raycaster();
-        const pointer = new THREE.Vector2();
-        let smoothedPinch = 0;
-        raycaster.params.Points.threshold = 5;
-
+        // --- INPUT LOGIC ---
+        const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2(); let smoothedPinch = 0; raycaster.params.Points.threshold = 10;
         const videoElement = document.getElementById('input_video');
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`});
         hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-
-        const cursor = document.getElementById('finger-cursor');
-        const ringCircle = document.querySelector('.progress-ring__circle');
-        const hudTarget = document.getElementById('target-val');
+        const cursor = document.getElementById('finger-cursor'); const ringCircle = document.querySelector('.progress-ring__circle'); const hudTarget = document.getElementById('target-val');
 
         hands.onResults(results => {
             document.getElementById('loader').style.opacity = 0;
             if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                cursor.style.opacity = 1;
-                const lm = results.multiHandLandmarks[0];
-                const index = lm[8];
-                const thumb = lm[4];
-                
-                cursorSmoothing.x += (index.x - cursorSmoothing.x) * smoothingFactor;
-                cursorSmoothing.y += (index.y - cursorSmoothing.y) * smoothingFactor;
-
-                const cx = (1 - cursorSmoothing.x) * window.innerWidth;
-                const cy = cursorSmoothing.y * window.innerHeight;
-                cursor.style.left = cx + 'px'; cursor.style.top = cy + 'px';
-
-                pointer.x = ((1 - cursorSmoothing.x) * 2) - 1; 
-                pointer.y = -(cursorSmoothing.y * 2) + 1;
-
+                cursor.style.opacity = 1; const lm = results.multiHandLandmarks[0]; const index = lm[8]; const thumb = lm[4];
+                cursorSmoothing.x += (index.x - cursorSmoothing.x) * smoothingFactor; cursorSmoothing.y += (index.y - cursorSmoothing.y) * smoothingFactor;
+                cursor.style.left = (1 - cursorSmoothing.x) * window.innerWidth + 'px'; cursor.style.top = cursorSmoothing.y * window.innerHeight + 'px';
+                pointer.x = ((1 - cursorSmoothing.x) * 2) - 1; pointer.y = -(cursorSmoothing.y * 2) + 1;
                 const now = Date.now();
 
                 if(STATE.mode === 'SOLAR') {
-                    // SELECTION MODE
                     checkIntersection(index);
                 } else if(STATE.mode === 'DETAIL') {
-                    // LOCKOUT CHECK
                     if(now - STATE.lastModeChange < 2000) return;
-
-                    rayLine.material.opacity = 0;
                     const pinch = Math.hypot(thumb.x - index.x, thumb.y - index.y);
                     smoothedPinch += (pinch - smoothedPinch) * 0.1;
-                    
-                    // Zoom
                     STATE.particleScale = 1.0 + (smoothedPinch * 6.0);
-                    // Rotate
-                    const dx = (cursorSmoothing.x - 0.5); 
-                    STATE.particleRotY += dx * 0.05;
-
-                    // NEW EXIT LOGIC: PROXIMITY
-                    // If pointer is too far from center (range -1 to 1)
-                    const distFromCenter = Math.hypot(pointer.x, pointer.y);
-                    // Threshold: 0.7 means outer 30% of screen triggers exit
-                    if(distFromCenter > 0.7) exitDetailView();
+                    STATE.particleRotY += (cursorSmoothing.x - 0.5) * 0.05;
+                    if(Math.hypot(pointer.x, pointer.y) > 0.7) exitDetailView();
                 }
             } else {
                 cursor.style.opacity = 0;
-                rayLine.material.opacity = 0;
                 if(STATE.mode === 'SOLAR') {
-                    if(STATE.selectionProgress > 0) {
-                        STATE.selectionProgress -= 0.02;
-                        applyProgressVisuals();
-                    } else {
-                         resetSelection();
-                    }
+                    if(STATE.selectionProgress > 0) { STATE.selectionProgress -= 0.02; applyProgressVisuals(); } else { resetSelection(); }
                 }
             }
         });
 
-        const cameraUtils = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 640, height: 480 });
-        cameraUtils.start();
+        const cameraUtils = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 640, height: 480 }); cameraUtils.start();
 
         function checkIntersection(rawFingerTip) {
             raycaster.setFromCamera(pointer, camera);
             const intersects = raycaster.intersectObjects(hitMeshes);
-            const circleCircumference = 163;
-
             if (intersects.length > 0) {
-                const hitObj = intersects[0].object;
-                const idx = hitObj.userData.id;
-                
-                // Draw Line
-                const vec = new THREE.Vector3((1 - rawFingerTip.x) * 2 - 1, -rawFingerTip.y * 2 + 1, 0.5).unproject(camera).sub(camera.position).normalize();
-                const distance = - camera.position.z / vec.z;
-                const pos = camera.position.clone().add(vec.multiplyScalar(distance));
-                const positions = rayLine.geometry.attributes.position.array;
-                positions[0] = pos.x; positions[1] = pos.y; positions[2] = pos.z - 50; 
-                const pPos = planetMeshes[idx].position;
-                positions[3] = pPos.x; positions[4] = pPos.y; positions[5] = pPos.z;
-                rayLine.geometry.attributes.position.needsUpdate = true;
-                rayLine.material.opacity = 0.6;
-
-                if (STATE.hoverIndex !== idx) {
-                    STATE.hoverIndex = idx;
-                    hudTarget.innerText = hitObj.userData.name;
-                    cursor.classList.add('locked');
-                } 
+                const idx = intersects[0].object.userData.id;
+                if (STATE.hoverIndex !== idx) { STATE.hoverIndex = idx; hudTarget.innerText = intersects[0].object.userData.name; cursor.classList.add('locked'); } 
                 STATE.selectionProgress += 0.04; 
             } else {
-                rayLine.material.opacity = 0;
                 STATE.selectionProgress -= 0.005; 
                 if(STATE.selectionProgress <= 0) resetSelection();
             }
-
             STATE.selectionProgress = Math.max(0, Math.min(1, STATE.selectionProgress));
             applyProgressVisuals();
-            ringCircle.style.strokeDashoffset = circleCircumference - (STATE.selectionProgress * circleCircumference);
-
-            if (STATE.selectionProgress >= 1.0 && STATE.mode === 'SOLAR') {
-                enterDetailView(STATE.hoverIndex);
-            }
+            ringCircle.style.strokeDashoffset = 163 - (STATE.selectionProgress * 163);
+            if (STATE.selectionProgress >= 1.0 && STATE.mode === 'SOLAR') enterDetailView(STATE.hoverIndex);
         }
 
         function applyProgressVisuals() {
-            const p = STATE.selectionProgress;
-            sunParticles.scale.setScalar(1.0 - p);
-            planetMeshes.forEach((mesh, i) => {
-                if(i === STATE.hoverIndex) {
-                    const growth = 1.0 + (p * 1.5);
-                    mesh.scale.setScalar(growth);
-                } else {
-                    const shrink = 1.0 - p;
-                    mesh.scale.setScalar(Math.max(0, shrink));
-                }
-            });
+            const p = STATE.selectionProgress; sunParticles.scale.setScalar(1.0 - p);
+            planetMeshes.forEach((mesh, i) => { if(i === STATE.hoverIndex) mesh.scale.setScalar(1.0 + (p * 1.5)); else mesh.scale.setScalar(Math.max(0, 1.0 - p)); });
         }
-
         function resetSelection() {
-            STATE.hoverIndex = -1;
-            STATE.selectionProgress = 0;
-            hudTarget.innerText = "SCANNING...";
-            cursor.classList.remove('locked');
-            ringCircle.style.strokeDashoffset = 163;
-            sunParticles.scale.setScalar(1);
-            planetMeshes.forEach(mesh => mesh.scale.setScalar(1));
+            STATE.hoverIndex = -1; STATE.selectionProgress = 0; hudTarget.innerText = "SCANNING..."; cursor.classList.remove('locked'); ringCircle.style.strokeDashoffset = 163;
+            sunParticles.scale.setScalar(1); planetMeshes.forEach(mesh => mesh.scale.setScalar(1));
         }
-
         function enterDetailView(index) {
-            STATE.mode = 'DETAIL';
-            STATE.lastModeChange = Date.now();
-            STATE.targetIndex = index;
-            document.getElementById('mode-val').innerText = "HOLOGRAPHIC";
-            cursor.classList.remove('locked'); 
-
-            generatePlanetParticles(index);
-            particleSystem.visible = true;
-            STATE.particleScale = 0;
-            
+            STATE.mode = 'DETAIL'; STATE.lastModeChange = Date.now(); STATE.targetIndex = index; document.getElementById('mode-val').innerText = "HOLOGRAPHIC"; cursor.classList.remove('locked'); 
+            generatePlanetParticles(index); particleSystem.visible = true; STATE.particleScale = 0;
             gsap.to(STATE, { particleScale: 1.0, duration: 1.5, ease: "back.out(1.0)" });
-            
             solarGroup.visible = false;
-
-            const d = PLANET_DATA[index];
-            document.getElementById('p-name').innerText = d.name;
-            document.getElementById('p-name').style.color = "#" + d.particleColor.getHexString();
-            document.getElementById('side-panel').classList.add('active');
-            document.getElementById('p-diam').innerText = d.realDia;
-            document.getElementById('p-temp').innerText = d.temp;
-            document.getElementById('p-grav').innerText = d.grav;
+            const d = PLANET_DATA[index]; document.getElementById('p-name').innerText = d.name; document.getElementById('p-name').style.color = "#" + d.particleColor.getHexString(); document.getElementById('side-panel').classList.add('active');
+            document.getElementById('p-diam').innerText = d.realDia; document.getElementById('p-temp').innerText = d.temp; document.getElementById('p-grav').innerText = d.grav;
+            document.getElementById('p-moons').innerText = d.moonCount > 0 ? d.moonCount + "+" : "None";
         }
-
         function exitDetailView() {
-            STATE.mode = 'SOLAR';
-            STATE.lastModeChange = Date.now();
-            document.getElementById('mode-val').innerText = "SYSTEM VIEW";
-            document.getElementById('side-panel').classList.remove('active');
-            
-            gsap.to(STATE, { particleScale: 0, duration: 0.5, onComplete: () => { 
-                particleSystem.visible = false; 
-                solarGroup.visible = true;
-                resetSelection(); 
-            }});
+            STATE.mode = 'SOLAR'; STATE.lastModeChange = Date.now(); document.getElementById('mode-val').innerText = "SYSTEM VIEW"; document.getElementById('side-panel').classList.remove('active');
+            gsap.to(STATE, { particleScale: 0, duration: 0.5, onComplete: () => { particleSystem.visible = false; solarGroup.visible = true; resetSelection(); }});
         }
-
         function animate() {
-            requestAnimationFrame(animate);
-            const time = performance.now() * 0.001;
-
-            if(STATE.mode === 'SOLAR') {
-                solarGroup.rotation.y = Math.sin(time * 0.02) * 0.05;
-                sunParticles.rotation.y -= 0.005;
-                sunMat.uniforms.uTime.value = time;
-            } else {
-                pMat.uniforms.uTime.value = time;
-                pMat.uniforms.uScale.value += (STATE.particleScale - pMat.uniforms.uScale.value) * 0.1;
-                particleSystem.rotation.y += (STATE.particleRotY - particleSystem.rotation.y) * 0.1;
-            }
-
-            stars.rotation.y -= 0.0001;
+            requestAnimationFrame(animate); const time = performance.now() * 0.001;
+            if(STATE.mode === 'SOLAR') { solarGroup.rotation.y = Math.sin(time * 0.02) * 0.05; sunParticles.rotation.y -= 0.005; sunMat.uniforms.uTime.value = time; }
+            else { pMat.uniforms.uTime.value = time; pMat.uniforms.uScale.value += (STATE.particleScale - pMat.uniforms.uScale.value) * 0.1; particleSystem.rotation.y += (STATE.particleRotY - particleSystem.rotation.y) * 0.1; }
             renderer.render(scene, camera);
         }
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth/window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-
+        window.addEventListener('resize', () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
         animate();
     </script>
 </body>

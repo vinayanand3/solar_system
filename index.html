@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Solar System V27: HYBRID INPUT</title>
+    <title>Solar System V28: WIDE VIEW</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; cursor: none; user-select: none; -webkit-tap-highlight-color: transparent; }
         
@@ -56,7 +56,7 @@
         }
         .hint-icon { padding: 3px 6px; border: 1px solid rgba(255,255,255,0.2); border-radius: 3px; background: rgba(255,255,255,0.05); }
 
-        /* --- TOGGLE & EXIT BUTTONS --- */
+        /* --- BUTTONS --- */
         #panel-toggle {
             position: absolute; top: 25px; right: 25px; width: 45px; height: 45px;
             z-index: 100; cursor: pointer; pointer-events: auto; display: none;
@@ -230,7 +230,14 @@
     <script>
         // --- DEVICE DETECTION ---
         const isMobile = window.innerWidth < 768;
-        const SUN_RADIUS = isMobile ? 30 : 45; 
+        
+        // --- KEY CHANGE: CAMERA POSITIONING ---
+        // On mobile, we pull the camera back to 1600 (vs 850) so the whole system fits width-wise.
+        const CAM_Z = isMobile ? 1600 : 850; 
+        const CAM_Y = isMobile ? 500 : 300; 
+
+        // Visual Tweaks
+        const SUN_RADIUS = isMobile ? 40 : 45; // Slightly larger sun in geometry, but it appears small due to distance
         const PLANET_SCALE_MOD = isMobile ? 1.8 : 1.0; 
 
         // --- PLANET DATA ---
@@ -251,8 +258,8 @@
             particleScale: 1.0, 
             
             // HYBRID INPUT STATE
-            activeInput: 'NONE', // 'HAND', 'MOUSE', 'TOUCH'
-            lastManualInputTime: 0, // Timestamp of last mouse/touch event
+            activeInput: 'NONE', 
+            lastManualInputTime: 0,
             
             lastModeChange: 0, lastHandSize: 0, isExiting: false, 
             rotationY: 0, rotationVelocity: 0, isDragging: false, lastInputX: 0
@@ -261,8 +268,12 @@
         const cursorSmoothing = { x: 0.5, y: 0.5 };
         const smoothingFactor = 0.15;
         const scene = new THREE.Scene(); scene.fog = new THREE.FogExp2(0x000000, 0.0002);
+        
+        // --- CAMERA SETUP ---
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 10000);
-        camera.position.set(0, 300, 850); camera.lookAt(0, 0, 0);
+        camera.position.set(0, CAM_Y, CAM_Z); 
+        camera.lookAt(0, 0, 0);
+        
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
         renderer.setSize(window.innerWidth, window.innerHeight); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         document.body.appendChild(renderer.domElement);
@@ -345,7 +356,6 @@
             cursor.style.opacity = mode === 'TOUCH' ? 0 : 1;
         }
 
-        // --- CORE CURSOR LOGIC ---
         function updateCursor(rawX, rawY) {
             cursorSmoothing.x += (rawX - cursorSmoothing.x) * smoothingFactor; 
             cursorSmoothing.y += (rawY - cursorSmoothing.y) * smoothingFactor;
@@ -365,9 +375,7 @@
             }
         }
 
-        // --- INPUT LISTENERS (ALWAYS ACTIVE) ---
-        
-        // 1. MOUSE
+        // --- INPUT LISTENERS ---
         window.addEventListener('mousemove', (e) => {
             STATE.lastManualInputTime = Date.now();
             hideLoader();
@@ -377,26 +385,34 @@
 
         window.addEventListener('mousedown', (e) => {
             STATE.lastManualInputTime = Date.now();
-            if(e.button === 0) { // Left Click
+            if(e.button === 0) {
                 STATE.isDragging = true; 
                 STATE.lastInputX = cursorSmoothing.x;
                 if(STATE.mode === 'SOLAR' && STATE.hoverIndex !== -1) enterDetailView(STATE.hoverIndex);
             }
             if(e.button === 2 && STATE.mode === 'DETAIL') triggerPushExit();
         });
-
         window.addEventListener('mouseup', () => { STATE.isDragging = false; });
         window.addEventListener('contextmenu', e => e.preventDefault());
+        
+        // --- MOUSE WHEEL ZOOM (SYSTEM & DETAIL) ---
         window.addEventListener('wheel', (e) => {
+            const zoomDir = e.deltaY > 0 ? 1 : -1; 
+            
             if(STATE.mode === 'DETAIL') { 
-                const zoomDir = e.deltaY > 0 ? -1 : 1; 
-                STATE.particleScale += zoomDir * 0.1; 
+                STATE.particleScale += zoomDir * -0.1; 
                 STATE.particleScale = Math.max(0.1, Math.min(STATE.particleScale, 5.0)); 
+            } else if(STATE.mode === 'SOLAR') {
+                // Allow zooming the Solar System view
+                camera.position.z += zoomDir * 50;
+                camera.position.z = Math.max(300, Math.min(camera.position.z, 3000));
             }
         });
 
-        // 2. TOUCH
+        // --- TOUCH LISTENERS (PINCH TO ZOOM SYSTEM) ---
         let initialPinchDist = 0;
+        let initialCamZ = 0;
+
         window.addEventListener('touchstart', (e) => {
             STATE.lastManualInputTime = Date.now();
             hideLoader();
@@ -407,58 +423,56 @@
                 const tx = e.touches[0].clientX / window.innerWidth;
                 const ty = e.touches[0].clientY / window.innerHeight;
                 STATE.lastInputX = tx;
-                // Instant warp for touch (no smooth lerp from previous mouse pos)
                 cursorSmoothing.x = tx; cursorSmoothing.y = ty; 
                 updateCursor(tx, ty);
                 if(STATE.mode === 'SOLAR' && STATE.hoverIndex !== -1) enterDetailView(STATE.hoverIndex);
             } else if (e.touches.length === 2) {
                 initialPinchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                initialCamZ = camera.position.z;
             }
         }, {passive: false});
 
         window.addEventListener('touchmove', (e) => {
             e.preventDefault();
             STATE.lastManualInputTime = Date.now();
-            if(STATE.mode === 'DETAIL' && e.touches.length === 2) {
+            if(e.touches.length === 2) {
                 const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
                 const delta = dist - initialPinchDist;
-                STATE.particleScale += delta * 0.005;
-                STATE.particleScale = Math.max(0.1, Math.min(STATE.particleScale, 5.0));
-                initialPinchDist = dist;
+                
+                if(STATE.mode === 'DETAIL') {
+                    STATE.particleScale += delta * 0.005;
+                    STATE.particleScale = Math.max(0.1, Math.min(STATE.particleScale, 5.0));
+                } else if(STATE.mode === 'SOLAR') {
+                    // Zoom Solar System
+                    camera.position.z = initialCamZ - (delta * 5.0);
+                    camera.position.z = Math.max(300, Math.min(camera.position.z, 3000));
+                }
+                
             } else if(e.touches.length === 1) {
                 updateCursor(e.touches[0].clientX / window.innerWidth, e.touches[0].clientY / window.innerHeight);
             }
         }, {passive: false});
-
         window.addEventListener('touchend', () => { STATE.isDragging = false; });
 
-        // 3. HAND TRACKING (MediaPipe)
+        // --- HAND TRACKING ---
         const videoElement = document.getElementById('input_video');
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`});
         hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
         
         hands.onResults(results => {
             hideLoader();
-            
-            // SMART OVERRIDE: If mouse moved in last 2 seconds, ignore hands
             if(Date.now() - STATE.lastManualInputTime < 2000) return;
-
             if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 if(STATE.activeInput !== 'HAND') updateHUD('HAND');
-                
                 const lm = results.multiHandLandmarks[0]; 
                 const index = lm[8]; const thumb = lm[4]; const middleMCP = lm[9]; const wrist = lm[0];
-                
                 updateCursor(1 - index.x, index.y);
-
                 if(STATE.mode === 'DETAIL') {
                     if(Date.now() - STATE.lastModeChange < 1500) { STATE.lastHandSize = Math.hypot(middleMCP.x - wrist.x, middleMCP.y - wrist.y); return; }
                     const handSize = Math.hypot(middleMCP.x - wrist.x, middleMCP.y - wrist.y); 
                     const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y); 
                     let normPinch = Math.min(1.0, pinchDist / handSize); 
-                    
                     STATE.isDragging = (normPinch < 0.2); 
-                    
                     const zVelocity = handSize - STATE.lastHandSize; STATE.lastHandSize = handSize;
                     if(zVelocity > 0.05 && normPinch > 0.4 && !STATE.isExiting) triggerPushExit();
                     if(!STATE.isExiting) { 
@@ -468,23 +482,12 @@
                         STATE.particleScale += (targetScale - STATE.particleScale) * 0.1; 
                     }
                 }
-            } else {
-                // Hand was active but lost? Just fade cursor
-                if(STATE.activeInput === 'HAND') cursor.style.opacity = 0;
-            }
+            } else { if(STATE.activeInput === 'HAND') cursor.style.opacity = 0; }
         });
 
         const cameraUtils = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 640, height: 480 }); 
-        
-        // Try to start camera, but don't block mouse if it fails
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(() => { cameraUtils.start(); })
-            .catch(err => { 
-                console.warn("Camera Denied. Falling back to Mouse/Touch only."); 
-                document.getElementById('loader-status').innerText = "CAMERA OFFLINE";
-            });
+        navigator.mediaDevices.getUserMedia({ video: true }).then(() => { cameraUtils.start(); }).catch(err => { console.warn("Camera Denied"); document.getElementById('loader-status').innerText = "CAMERA OFFLINE"; });
 
-        // --- APP LOGIC ---
         function triggerPushExit() {
             STATE.isExiting = true; const ring = document.getElementById('shockwave-ring');
             gsap.fromTo(ring, { opacity: 1, scale: 0.1, borderWidth: 10 }, { opacity: 0, scale: 5.0, borderWidth: 0, duration: 0.6, ease: "power2.out" });
@@ -504,8 +507,6 @@
             STATE.selectionProgress = Math.max(0, Math.min(1, STATE.selectionProgress)); 
             applyProgressVisuals(); 
             ringCircle.style.strokeDashoffset = 163 - (STATE.selectionProgress * 163);
-            
-            // Only auto-enter for Hands. Mouse/Touch requires click.
             if (STATE.activeInput === 'HAND' && STATE.selectionProgress >= 1.0 && STATE.mode === 'SOLAR') enterDetailView(STATE.hoverIndex);
         }
 
@@ -524,7 +525,6 @@
             
             panelToggle.style.display = 'flex'; 
             if(isMobile) { exitBtn.style.display = 'flex'; }
-            
             if(window.innerWidth > 768) { sidePanel.classList.add('active'); panelToggle.classList.add('open'); } 
             else { sidePanel.classList.remove('active'); panelToggle.classList.remove('open'); }
             STATE.rotationY = 0; STATE.rotationVelocity = 0;
